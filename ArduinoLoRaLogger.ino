@@ -48,28 +48,30 @@ char* helpString =
 "at;    send AT\r\ntm;    send AT+MODE=TEST\r\ntc;    send AT+TEST=RFCFG\r\nt1;    send AT+TEST=TXLRSTR\r\nt2;    send AT+TEST=TXLRSTR in 20s\r\ntxRx;  send AT and validate response\r\nlp;    send AT+LOWPOWER\r\n";
 
 //log period processing
-#define LOG_PERIOD_MS 300000 //5 mins in ms
+#define LOG_PERIOD_MS 60000 //5 mins in ms
 unsigned long startPeriodTime = 0;
 unsigned long currentTime = 0;
 
 //At comms handling
-#define TIMEOUT_MS 500
+#define TIMEOUT_MS 2000
 bool sendAndWaitResponse(const char* send, const char* response);
+bool transmitSequence(char* packet);
 
 //AT COMMANDS
 #define AT "AT\r\n"
-#define AT_RESPONSE "+AT: OK"
+#define AT_RESPONSE "+AT: OK\r\n"
 #define TEST_MODE "AT+MODE=TEST\r\n"
-#define TEST_MODE_RESPONSE "+MODE: TEST" 
+#define TEST_MODE_RESPONSE "+MODE: TEST\r\n" 
 #define TEST_CONFIG "AT+TEST=RFCFG,868,SF7,125,8,8,14,OFF,OFF,OFF\r\n"
 #define TEST_CONFIG_RESPONSE "+TEST: RFCFG"
+#define TEST_TRANSMIT_START "AT+TEST=TXLRSTR"
 #define TEST_TRANSMIT "AT+TEST=TXLRSTR,\"Testing, Testing ....\"\r\n"
-#define TEST_TRANSMIT_RESPONSE "+TEST: TXLRSTR"
-#define TEST_TRANSMIT_DONE "+TEST: TX DONE"
+#define TEST_TRANSMIT_RESPONSE_START "+TEST: TXLRSTR"
+#define TEST_TRANSMIT_DONE "+TEST: TX DONE\r\n"
 #define TEST_DELAY_TRANSMIT "AT+TEST=TXLRSTR,\"Delay test\"\r\n"
 #define LOW_POWER "AT+LOWPOWER\r\n"
-#define LOW_POWER_RESPONSE "+LOWPOWER: SLEEP"
-#define LOW_POWER_WAKEUP "+LOWPOWER: WAKEUP"
+#define LOW_POWER_RESPONSE "+LOWPOWER: SLEEP\r\n"
+#define LOW_POWER_WAKEUP "+LOWPOWER: WAKEUP\r\n"
 
 /***************************
 USER INPUT HANDLING
@@ -123,16 +125,9 @@ void processBuffer()
   {
     Serial.println(helpString);
   }
-  else if(strncmp(buffer, "txRx;", bufferCount) == 0)
+  else if(strncmp(buffer, "tx;", bufferCount) == 0)
   {
-    if(sendAndWaitResponse(AT, AT_RESPONSE) == true)
-    {
-      Serial.println("\r\nsuccess\r\n");
-    }
-    else
-    {
-      Serial.println("\r\nfail\r\n");
-    }
+    transmitSequence("test packet");
   }
 }
 
@@ -168,6 +163,9 @@ bool sendAndWaitResponse(const char* send, const char* response)
   sendLength = strlen(send);
   responseLength = strlen(response);
   
+  //clear out the buffer.
+  while(altSerial.available()) altSerial.read();
+ 
   //send data
   char* add = send;
 
@@ -189,7 +187,7 @@ bool sendAndWaitResponse(const char* send, const char* response)
   char buffer[100];
   int bufferPointer = 0;
 
-  while(altSerial.available())
+  while(altSerial.available() && (bufferPointer < responseLength))
   {
     buffer[bufferPointer] = altSerial.read();
     Serial.print(buffer[bufferPointer]);
@@ -201,20 +199,99 @@ bool sendAndWaitResponse(const char* send, const char* response)
   return true;
 }
 
+
+bool waitResponse(char* response, unsigned long waitms)
+{
+  int responseLength = 0;
+  responseLength = strlen(response);
+
+  unsigned long startTime = millis();
+
+  while((altSerial.available() < responseLength) && ((millis() - startTime) < waitms));
+
+  if(altSerial.available() < responseLength)
+  {
+    Serial.println("wait response timeout");
+    return false;
+  }
+
+  char buffer [100];
+  unsigned int bufferCount = 0;
+
+  while (altSerial.available())
+  { 
+    buffer[bufferCount] = altSerial.read();
+    Serial.print(buffer[bufferCount]);
+    bufferCount++;
+  }
+
+  if(strncmp(buffer, response, responseLength) != 0)
+  { 
+    Serial.println("response doean't match");
+    return false;
+  }
+
+  return true;
+}
+
+
 bool transmitSequence(char* packet)
 {
   //device should be in low power, try first to wakeup
   if(!sendAndWaitResponse(AT, LOW_POWER_WAKEUP))
   {
+    
     //retry with simple AT send/receive
-    if(!sendAndWaitResponse(AT, AT_RESPONSE)) return false;
+    if(!sendAndWaitResponse(AT, AT_RESPONSE))
+    {
+      Serial.println("At failed!");
+      return false;
+    }
   }
 
-  if(!sendAndWaitResponse(TEST_MODE, TEST_MODE_RESPONSE)) return false;
+  if(!sendAndWaitResponse(TEST_MODE, TEST_MODE_RESPONSE))
+  {
+    Serial.println("test mode failed!"); 
+    return false;
+  }
 
-  if(!sendAndWaitResponse(TEST_CONFIG, TEST_CONFIG_RESPONSE)) return false;
-
+  if(!sendAndWaitResponse(TEST_CONFIG, TEST_CONFIG_RESPONSE)) 
+  {
+    Serial.println("test config failed!");
+    return false;
+  }
+    
+  delay(500);
+  while(altSerial.available()) Serial.print((char)altSerial.read());  
   
+  Serial.println("");
+
+  char message [100];
+  strcpy(message, TEST_TRANSMIT_START);
+  strcat(message, ",\"");
+  strcat(message, packet);
+  strcat(message, "\"\r\n");
+
+  //response is the message with the first two characters removed.
+  char response[100];
+  strcpy(response, TEST_TRANSMIT_RESPONSE_START);  
+  strcat(response, " \"");                                    strcat(response, packet);                                   strcat(response, "\"\r\n");
+
+  if(!sendAndWaitResponse(message,response))
+  {
+    //log error.
+    Serial.println("test transmit message upload failed!");
+    return false;
+  }
+ 
+  //check for successful transmit
+  if(!waitResponse(TEST_TRANSMIT_DONE, 5000))
+  {
+    Serial.println("no transmit done confirmation");
+    return false;
+  }
+
+  return true;
   
 }
 
@@ -240,9 +317,17 @@ void logData()
   sprintf(packet, "%d, %d, %u", temp, humid, count);
 
   //transmit sequence
-  
+  if(!transmitSequence(packet))
+  {
+    //log error
+    Serial.println("transmit sequence failed");
+  }
+  else 
+  {
+    Serial.println("transmit sequence success!");
+  }
 
-  //Sd card log (with tx success/fail)
+  //Sd card log
 }                                     
 
 void logPeriodReset()
@@ -254,7 +339,9 @@ void logPeriodReset()
 
 void setup() {                                                Serial.begin(9600);                                         while (!Serial) ; // wait for Arduino Serial Monitor to open
   Serial.println("AltSoftSerial Test Begin");
+
   altSerial.begin(9600);
+  altSerial.println(AT);
   altSerial.println(LOW_POWER);    
 
   logPeriodReset();
@@ -272,10 +359,13 @@ void loop() {
     userSerialIn(c);
     //altSerial.print(c);
   }
+
+  /*
   if (altSerial.available()) {
     c = altSerial.read();
     Serial.print(c);
   }
+  */ 
 
   if(logPeriodElapsed())
   {
