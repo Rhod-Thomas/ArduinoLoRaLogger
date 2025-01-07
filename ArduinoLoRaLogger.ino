@@ -7,7 +7,7 @@ Design for test methodology will be followed. With the folloqing test milestones
 
 2) Establish  Serial test commands. All Grove commands to be used. At, Test mod3, test transmit, low power mod3, wakeup PASS
 
-3) 5 minute LoRa test data send to raspi (hard-coded)
+3) 5 minute LoRa test data send to raspi (hard-coded)PASS
 
 4) arduino battery powered.
 
