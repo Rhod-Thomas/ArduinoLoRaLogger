@@ -1,65 +1,181 @@
+#include <Arduino.h>
+#include "rtc.h"
+#include "lora.h"
+#include "sensors.h"
 
+#define SENSOR_SELECT_MASK 0x0f; //use the first 4 sensors.
 
-//log period processing
-#define LOG_PERIOD_MS 10000
+//all actions have the same period. 
+#define LOG_PERIOD 60
+unsigned long CurrentRtcTime = 0;
 
-unsigned long startPeriodTime = 0;
-unsigned long currentTime = 0;
-/**********************
-LOG PERIOD HANDLING
-***********************/
+bool AlarmConfigured = false;
+unsigned long LogPeriod = LOG_PERIOD;
 
-bool logPeriodElapsed()
+uint32_t UnixTime, UnixAlarmTime;
+
+typedef enum  
 {
-  currentTime = millis();
-  return ((currentTime - startPeriodTime) > LOG_PERIOD_MS); 
+  configureAlarm,
+  waitForAlarm,
+  startSensors,
+  getSensorResult,
+  startTx,
+  waitForTx,
+
+}schedulerState;
+
+schedulerState CurrentState = configureAlarm;
+
+uint8_t SensorSelect = SENSOR_SELECT_MASK;
+int16_t SensorResults[MAX_SENSORS];
+
+
+void configAlarm()
+{
+  uint32_t remainder, beforeAlarm;
+  	
+  //get the current unix time from RTC.
+  UnixTime = RtcGetUnixTime();
+  Serial.println(UnixTime, DEC);
+
+  //figure out the next alarm time.
+  remainder = UnixTime % LOG_PERIOD;
+  beforeAlarm = LOG_PERIOD - remainder;
+  UnixAlarmTime = UnixTime + beforeAlarm;
+
+  //set the RTC alarm time
+  RtcSetAlarmTime(UnixAlarmTime);
+  Serial.println(UnixAlarmTime);
 }
 
-void logData()
+bool alarmTriggered()
 {
-  //TODO          
-  //build data packet
-
-  //TODO
-  //call RTC module and sensor drivers to build packet.
-  char packet [20];
-  int temp = 23;
-  int humid = 75;
-  unsigned int count = 2;
-
-<BS> sprintf(packet, "%d, %d, %u", temp, humid, count);
-
-  //transmit sequence
-  if(!transmitSequence(packet))
-  {
-    //log error
-    Serial.println("transmit sequence failed");
-  }
-  else 
-  {
-    Serial.println("transmit sequence success!");
-  }
-
-  //Sd card log
-}                                     
-
-void logPeriodReset()
-{
-  startPeriodTime = millis();
+  return RtcGetAlarmFlag();
 }
 
 
-
-void SchedulerService()
-{
-  if(logPeriodElapsed())
-  { 
-    // logData();
-    logPeriodReset();
-  }
-}
+/****************************
+ * SCHEDULER API
+ ****************************/
 
 void SchedulerInit()
 {
-  logPeriodReset();
+  //testPeriodReset();
+  CurrentState = configureAlarm;
 }
+
+void SchedulerService()
+{
+  //TODO
+  //Scheduler works by setting alarms for events in the future.
+  //if the alarm has not been set the Scheduler does that first.
+  //if the alarm is set and the alarm flag is not, the scheduler returns not busy.
+  //if the alarm flag is true the scheduler performs the appropriate action. 
+  //then sets the next alarm and enters wait mode again. 	
+  switch(CurrentState)
+  {
+    case waitForAlarm:
+      if(alarmTriggered())
+      {
+	//TODO
+        //CurrentState = startSensors;
+	Serial.println("alarm processed by scheduler!");
+	CurrentState = startSensors;
+      }
+    break;
+    case startSensors:
+    {
+    //TODO
+    //for each sensor, start
+    
+    uint8_t sensorSel = SensorSelect;
+    uint8_t sensorNumber = 0;
+
+    for(int n = 0; n < MAX_SENSORS; n++)
+    {
+      if(sensorSel & 0x01)
+      {
+        SensorStart(sensorNumber);
+      }
+
+      sensorSel = sensorSel >> 1;
+      sensorNumber++;
+    }
+    
+    Serial.println("Sensors started"); 
+    CurrentState = getSensorResult;
+
+    break;
+    }
+    case getSensorResult:
+    {
+    //TODO
+    //for each sensor, get value.   
+    
+    uint8_t sensorSel = SensorSelect;
+    uint8_t sensorNumber = 0;
+
+    for(int n = 0; n < MAX_SENSORS; n++)
+    {
+      if(sensorSel & 0x01)
+      {
+        SensorResults[sensorNumber] =  SensorRead(sensorNumber);
+      }
+
+      sensorSel = sensorSel >> 1;
+      sensorNumber++;
+    }
+
+    Serial.println("Sensors read"); 
+    CurrentState = startTx;
+
+    break;
+    }
+    case startTx:
+    {
+    //Build packet from SensorResults array and UnixAlarmTime.
+     char packet[PACKET_DATA_MAX_LENGTH];
+
+     sprintf(packet, "%lu", UnixAlarmTime);
+
+    uint8_t sensorSel = SensorSelect;
+    uint8_t sensorNumber = 0;
+
+    for(int n = 0; n < MAX_SENSORS; n++)
+    {
+      if(sensorSel & 0x01)
+      {
+        sprintf(packet + strlen(packet), ",%d", SensorResults[sensorNumber]); 
+      }
+
+      sensorSel = sensorSel >> 1;
+      sensorNumber++;
+    }
+     
+    // Serial.println(packet);
+     LoRaSendPacket(packet, true); 
+     CurrentState = waitForTx;
+
+    break;
+    }
+    case waitForTx:
+      if(!LoRaService())
+      {
+        CurrentState = configureAlarm;
+      } 
+    break;
+    case configureAlarm:
+      configAlarm();
+      CurrentState = waitForAlarm;
+    break;
+  }
+
+  return (CurrentState != waitForAlarm);
+}
+
+void SchedulerTest()
+{
+  CurrentState = configureAlarm;
+}
+

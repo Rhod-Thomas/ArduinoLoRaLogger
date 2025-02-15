@@ -2,7 +2,7 @@
 #ifndef USER_COMMS
 #define USER_COMMS
 
-void UserCommsService();
+bool UserCommsService();
 void UserCommsInit();
 
 #endif

@@ -20,9 +20,9 @@ Design for test methodology will be followed. With the folloqing test milestones
 
 6) permanent physical build on Nylon 6 plate. TODO
  
-7) modularisation of Arduino code. TODO
+7) modularisation of Arduino code. DONE:q
 
-8) RTC integration. TODO
+8) RTC integration. DONE
  - i2c hardwae interface
  - basic hard coded function test
  - comms interface; set and read.
@@ -32,18 +32,14 @@ Design for test methodology will be followed. With the folloqing test milestones
 
 */
 #include <AltSoftSerial.h>
-#include <DS3231-RTC.h>
 #include <Wire.h>
 #include <string.h>
 #include <stdio.h>
 #include "lora.h"
 #include "userComms.h"
-
-
-/**************************
-GLOBAL VARIABLES
-***************************/
-RTClib myRTC;
+#include "rtc.h"
+#include "scheduler.h"
+#include "sensors.h"
 
 /**********************                         
 SETUP   
@@ -59,13 +55,11 @@ void setup() {
   while (!Serial) ; // wait for serial monitor to open
 
   UserCommsInit();  
-  //SchedulerInit();
   RtcInit();
   LoRaInit();
-  //SensorsInit();
-  //TODO
-  //move to rtc module.
-  Wire.begin();
+  SchedulerInit();
+  SensorsInit();
+  //PwrMngmtInit();
 }
 
 /**********************  
@@ -74,16 +68,18 @@ INFINITE LOOP
 
 void loop() {
   
-  //TODO
-  //services return with busy/not busy
+  bool busy = false;
 
-  UserCommsService();
-  //SchedulerService();
-  RtcService();
-  LoRaService();
+  busy |= UserCommsService();
+  busy |= SchedulerService();
+  busy |= RtcService();
+  busy |= LoRaService();
   //SensorsService();
 
-  //TODO
-  //deep sleep based on service' status
-
+  //micro deep sleep if nothing busy
+  if(!busy)
+  {
+    //PwrMngmntServ();
+   // LowPower.deepSleep();
+  }
 }

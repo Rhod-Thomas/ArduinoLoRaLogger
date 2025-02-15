@@ -2,31 +2,34 @@
 #include <AltSoftSerial.h>
 #include <string.h>
 #include <stdio.h>
+#include "lora.h"
 
 #define AT_TIMEOUT_MS 2000
 #define TX_TIMEOUT_MS 5000
 #define AT_RETRIES 3
-#define RESPONSE_MAX_LENGTH 30
+#define RESPONSE_MAX_LENGTH 20
+#define NEWLINE '\n'
 
 //LoRa grove E5 AT COMMANDS
 #define AT "AT\r\n"
-#define AT_RESPONSE "+AT: OK\r\n"
+#define AT_RESPONSE "+AT: OK"
 #define TEST_MODE "AT+MODE=TEST\r\n"
-#define TEST_MODE_RESPONSE "+MODE: TEST\r\n" 
+#define TEST_MODE_RESPONSE "+MODE: TEST" 
 #define TEST_CONFIG "AT+TEST=RFCFG,868,SF7,125,8,8,14,OFF,OFF,OFF\r\n"
 #define TEST_CONFIG_RESPONSE "+TEST: RFCFG"
 #define TEST_TRANSMIT_START "AT+TEST=TXLRSTR"
 #define TEST_TRANSMIT "AT+TEST=TXLRSTR,\"Testing, Testing ....\"\r\n"
 #define TEST_TRANSMIT_RESPONSE_START "+TEST: TXLRSTR"
-#define TEST_TRANSMIT_DONE "+TEST: TX DONE\r\n"
+#define TEST_TRANSMIT_DONE "+TEST: TX DONE"
 #define TEST_DELAY_TRANSMIT "AT+TEST=TXLRSTR,\"Delay test\"\r\n"
 #define LOW_POWER "AT+LOWPOWER\r\n"
-#define LOW_POWER_RESPONSE "+LOWPOWER: SLEEP\r\n"
-#define LOW_POWER_WAKEUP_RESPONSE "+LOWPOWER: WAKEUP\r\n"
+#define LOW_POWER_RESPONSE "+LOWPOWER: SLEEP"
+#define LOW_POWER_WAKEUP_RESPONSE "+LOWPOWER: WAKEUP"
 
 //state machine to handle the transmit sequence.
-enum class txSeqStg
+typedef enum  
 {
+
   idle,
   atSend,
   atSendRsp,
@@ -41,19 +44,22 @@ enum class txSeqStg
   lowPowerMode,
   lowPowerModeRsp,
   cleanUp,
-};
+
+}txSeqStg;
 
 //state machine to handle the comms response.
-enum class rspStat
+typedef enum  
 {
   wait,
   done,
   timeout,
   error,
 
-};
+}rspStat;
 
 txSeqStg CurrentTxStage = idle;
+
+AltSoftSerial altSerial;
 
 unsigned long StartTime;
 unsigned long Timeout;
@@ -62,7 +68,20 @@ char RespCopy[RESPONSE_MAX_LENGTH];
 int ResponseLength;
 int Retries;
 
+static char buffer[RESPONSE_MAX_LENGTH];
+int BufferCount = 0;
+bool NewlineRx = false;
+
 bool DebugFlag = false;
+
+char Packet[PACKET_MAX_LENGTH];
+
+void prepareResponseStuff()
+{
+  StartTime = millis();
+  BufferCount = 0;
+  NewlineRx = false;
+}
 
 void atSendCommand(const char* command, const char* resp)
 {
@@ -89,43 +108,56 @@ void atSendCommand(const char* command, const char* resp)
     add++;
   }
 
-  StartTime = millis();
-  Retries = AT_RETRIES;
   Timeout = AT_TIMEOUT_MS;
+  prepareResponseStuff();
 }
 
 
 rspStat atRespServ()
 {
+  //guard against stupid values
   if(ResponseLength == 0)
   {
     return error;
   } 
 
-  //no timeout and response not complete, so wait. 
-  if((altSerial.available() < ResponseLength) &&
+  //Every response is terminated with newline. 
+  while(altSerial.available() && (NewlineRx == false))
+  {
+    char nextChar = altSerial.read();
+
+    //only copy part of the response typically.
+    if(BufferCount < ResponseLength)
+    {
+      buffer[BufferCount] = nextChar;
+      BufferCount++;
+    }
+      
+    if(nextChar == NEWLINE)
+    {
+      NewlineRx = true;
+    }
+
+    if(DebugFlag == true)
+    {
+      Serial.print(nextChar);
+    }
+  }
+ 
+  if((NewlineRx == false) &&
     ((millis() - StartTime) < Timeout))
   {
     return wait;
   }
 
-  if(altSerial.available() < ResponseLength)
+  if(NewlineRx == false)
   {
     return timeout;
-  }
-  
-  char buffer[100];
-  int bufferPointer = 0;
+  }  
 
-  while(altSerial.available() && (bufferPointer < ResponseLength))
+  if(ResponseLength != BufferCount)
   {
-    buffer[bufferPointer] = altSerial.read();
-    
-    if(DebugFlag == true)
-    {
-      Serial.print(buffer[bufferPointer]);
-    }
-    bufferPointer++;
+    return error;
   }
  
   if(strncmp(RespCopy, buffer, ResponseLength) != 0)
@@ -136,7 +168,7 @@ rspStat atRespServ()
   return done;
 }
 
-void ProcessCmdRsp(rspStat rsp, txSeqStg next, txSeqStg prev)
+void processCmdRsp(rspStat rsp, txSeqStg next, txSeqStg prev)
 {
   if(rsp == wait)
   {
@@ -146,6 +178,7 @@ void ProcessCmdRsp(rspStat rsp, txSeqStg next, txSeqStg prev)
   {
     //next stage and refresh retries.
     CurrentTxStage = next;
+    Retries = AT_RETRIES;
   }
   else if (((rsp == timeout) || (rsp == error)) && (Retries > 0)) 
   {
@@ -161,14 +194,15 @@ void ProcessCmdRsp(rspStat rsp, txSeqStg next, txSeqStg prev)
 
 void LoRaInit()
 {
-  currentTxStage = idle;
+  CurrentTxStage = idle;
+  altSerial.begin(9600);
 }
 
 bool LoRaService()
 {
   rspStat rspStatus; 
 
-  switch (CurrenTxStage)
+  switch (CurrentTxStage)
   {
     case idle:
       //do nothing
@@ -201,7 +235,7 @@ bool LoRaService()
 
       atSendCommand(TEST_CONFIG, TEST_CONFIG_RESPONSE);
       CurrentTxStage = testModeConfigRsp;
-
+  
     break;
     case testModeConfigRsp:
 
@@ -213,20 +247,13 @@ bool LoRaService()
 
       //TODO 
       //build transmit packet here
-      char message [100];
+      char message [PACKET_MAX_LENGTH];
       strcpy(message, TEST_TRANSMIT_START);
       strcat(message, ",\"");
       strcat(message, Packet);
       strcat(message, "\"\r\n");
     
-      //response is the message with the first two characters removed.
-      char response[100];
-      strcpy(response, TEST_TRANSMIT_RESPONSE_START);  
-      strcat(response, " \"");
-      strcat(response, Packet); 
-      strcat(response, "\"\r\n");
-
-      atSendCommand(message, response);
+      atSendCommand(message, TEST_TRANSMIT_RESPONSE_START);
       CurrentTxStage = testTransmitRsp;
 
     break;
@@ -241,9 +268,9 @@ bool LoRaService()
       
       ResponseLength = strlen(TEST_TRANSMIT_DONE);
       strcpy(RespCopy, TEST_TRANSMIT_DONE);
-      StartTime = millis();
       Retries = AT_RETRIES;
       Timeout = TX_TIMEOUT_MS;
+      prepareResponseStuff();
       CurrentTxStage = waitTestTransmitSuccess;
 
     break;
@@ -282,6 +309,7 @@ void LoRaSendPacket(const char* packet, bool debugFlag)
   strcpy(Packet, packet);
   DebugFlag = debugFlag;
   CurrentTxStage = atSend;
+  Retries = AT_RETRIES;
 
 }
 
