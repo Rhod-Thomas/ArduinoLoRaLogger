@@ -79,6 +79,11 @@ void loop() {
   //micro deep sleep if nothing busy
   if(!busy)
   {
+    //TODO
+    //Use deepSleepwakeup timer as backup to RTC
+    //b3vause Rtc or micro has missed a wakeup alarm
+    //before which has rendered thw logger silent.
+
     //PwrMngmntServ();
    // LowPower.deepSleep();
   }
