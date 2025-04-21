@@ -3,8 +3,6 @@ This sketxh serves as the basis for a LoRa logger intenzed for use in a home sma
 
 Design for test methodology will be followed. With the folloqing test milestones.
 
-1) virtual and regular serial comms. transparent uart to grove lora wi5. Test with verified commands.PASS
-
 2) Establish  Serial test commands. All Grove commands to be used. At, Test mod3, test transmit, low power mod3, wakeup PASS
 
 3) 5 minute LoRa test data send to raspi (hard-coded)PASS
