@@ -14,12 +14,18 @@ unsigned long LogPeriod = LOG_PERIOD;
 
 uint32_t UnixTime, UnixAlarmTime;
 
+//TODO
+//implement Trigger and actions
+
 typedef enum  
 {
   configureAlarm,
   waitForAlarm,
   startSensors,
   getSensorResult,
+  checkTriggers,
+  startActions,
+  waitForActions,
   startTx,
   waitForTx,
 
