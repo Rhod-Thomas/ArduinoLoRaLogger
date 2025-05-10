@@ -7,7 +7,11 @@
 
 //all actions have the same period. 
 #define LOG_PERIOD 60
+#define LOG_BACKUP_OFFSET 3
+#define MILLIS_PER_SECOND 1000
+
 unsigned long CurrentRtcTime = 0;
+unsigned long CurrentCount = 0; 
 
 bool AlarmConfigured = false;
 unsigned long LogPeriod = LOG_PERIOD;
@@ -82,13 +86,18 @@ void SchedulerService()
   switch(CurrentState)
   {
     case waitForAlarm:
+
       if(alarmTriggered())
       {
-	//TODO
-        //CurrentState = startSensors;
 	Serial.println("alarm processed by scheduler!");
 	CurrentState = startSensors;
       }
+      else if(millis() > (CurrentCount + (LOG_PERIOD + LOG_BACKUP_OFFSET) * MILLIS_PER_SECOND))
+      {
+	Serial.println("WARNING!! Backup alarm triggered because RTC alarm did not occur when expected."); 
+	CurrentState = configureAlarm; 
+      }
+
     break;
     case startSensors:
     {
@@ -173,6 +182,7 @@ void SchedulerService()
     break;
     case configureAlarm:
       configAlarm();
+      CurrentCount = millis(); 
       CurrentState = waitForAlarm;
     break;
   }
