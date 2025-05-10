@@ -92,7 +92,7 @@ void SchedulerService()
 	Serial.println("alarm processed by scheduler!");
 	CurrentState = startSensors;
       }
-      else if(millis() > (CurrentCount + (LOG_PERIOD + LOG_BACKUP_OFFSET) * MILLIS_PER_SECOND))
+      else if(millis() > (CurrentCount + ((unsigned long)(LOG_PERIOD + LOG_BACKUP_OFFSET) * MILLIS_PER_SECOND)))
       {
 	Serial.println("WARNING!! Backup alarm triggered because RTC alarm did not occur when expected."); 
 	CurrentState = configureAlarm; 
