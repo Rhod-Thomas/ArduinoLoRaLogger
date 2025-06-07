@@ -1,7 +1,3 @@
-/*
-TODO
-alarm redundancy implementation and test - use millis().
-*/
 
 #include <AltSoftSerial.h>
 #include <Wire.h>
@@ -12,6 +8,7 @@ alarm redundancy implementation and test - use millis().
 #include "rtc.h"
 #include "scheduler.h"
 #include "sensors.h"
+#include <avr/wdt.h>
 
 /**********************                         
 SETUP   
@@ -27,6 +24,11 @@ void setup() {
   LoRaInit();
   SchedulerInit();
   SensorsInit();
+
+  wdt_disable();
+  delay(3000); //to prevent infinte loop reset.
+  wdt_enable(WDTO_8S);
+
   //PwrMngmtInit();
 }
 
@@ -42,6 +44,7 @@ void loop() {
   busy |= SchedulerService();
   busy |= RtcService();
   busy |= LoRaService();
+  wdt_reset();
   //SensorsService();
 
   //micro deep sleep if nothing busy
